@@ -59,11 +59,6 @@ Below are all the variables you need to define before using this pipeline.
 | containerAppEnv | Name of your Container Apps Environment | 'prod-environment' | Yes |
 | containerAppPort | Primary container port | '80' | Yes |
 
-Fixed the table formatting by:
-
-1. Adding the missing header row separator line
-2. Aligning the columns properly
-3. Maintaining consistent column structure
 
 ## Repository Structure
 
@@ -128,11 +123,11 @@ az pipelines run --name falcon-aca-deploy \
   --parameters deployToACA=true
 ```
 
+\
 ## Pipeline Parameters
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-
 | useDockerfile | Build from local Dockerfile | false | true/false |
 | dockerfilePath | Path to Dockerfile | './Dockerfile' | Any valid path |
 | runFCSScan | Run FCS scan | false | true/false |
