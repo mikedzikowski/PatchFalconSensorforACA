@@ -148,11 +148,13 @@ Azure DevOps pipeline run dialog showing configurable parameters including Docke
 #### 2. Custom Dockerfile Build
 
 ![Custom Web App](images/buildrun.png)
+
 *Custom nginx deployment showing the personalized index.html content running in ACA*
 
 #### 3. Full Patch Ppeline
 
 ![Security Pipeline Steps](images/examplerun1.png)
+
 *Complete pipeline run with all security features enabled:*
 
 - Custom image build
