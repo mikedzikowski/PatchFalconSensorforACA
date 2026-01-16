@@ -21,6 +21,16 @@ This pipeline enables you to patch container images with Falcon Container Securi
    - Type: Azure Container Registry
    - Purpose: Docker build and push operations
 
+## Pipeline Parameters
+
+| Parameter | Description | Default | Options |
+|-----------|-------------|---------|---------|
+| useDockerfile | Build from local Dockerfile | false | true/false |
+| dockerfilePath | Path to Dockerfile | './Dockerfile' | Any valid path |
+| runFCSScan | Run FCS scan | false | true/false |
+| deployToACA | Deploy to ACA | false | true/false |
+| falconRegion | Falcon Cloud Region | 'us-1' | us-1, us-2, eu-1, us-gov-1, us-gov-2 |
+
 ### Variable Group
 
 Create a variable group named 'falcon-credentials' containing:
@@ -122,17 +132,6 @@ az pipelines run --name falcon-aca-deploy \
   --parameters runFCSScan=true \
   --parameters deployToACA=true
 ```
-
-\
-## Pipeline Parameters
-
-| Parameter | Description | Default | Options |
-|-----------|-------------|---------|---------|
-| useDockerfile | Build from local Dockerfile | false | true/false |
-| dockerfilePath | Path to Dockerfile | './Dockerfile' | Any valid path |
-| runFCSScan | Run FCS scan | false | true/false |
-| deployToACA | Deploy to ACA | false | true/false |
-| falconRegion | Falcon Cloud Region | 'us-1' | us-1, us-2, eu-1, us-gov-1, us-gov-2 |
 
 ## Visual Examples
 
