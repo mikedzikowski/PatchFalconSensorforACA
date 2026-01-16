@@ -1,0 +1,330 @@
+# falcon-aca-deploy.yml
+# Purpose: Pipeline to patch container images with Falcon Container Security and deploy to Azure Container Apps
+#
+# Required Service Connections:
+#   - Azure Service Connection: Azure Resource Manager connection for ACR and ACA access
+#   - Docker Registry Connection: Named 'acr' for Docker operations
+#
+# Required Variable Group (falcon-credentials):
+#   - FALCON_CLIENT_ID: CrowdStrike API client ID
+#   - FALCON_CLIENT_SECRET: CrowdStrike API client secret
+#   - FALCON_CID: CrowdStrike Customer ID (without hash)
+#   - FALCON_CID_FCS: CrowdStrike Customer ID for FCS CLI (without hash)
+#   - ACR_USERNAME: Azure Container Registry admin username
+#   - ACR_PASSWORD: Azure Container Registry admin password
+
+parameters:
+- name: useDockerfile
+  type: boolean
+  default: false
+  displayName: 'Build from Dockerfile'
+- name: dockerfilePath
+  type: string
+  default: './Dockerfile'
+  displayName: 'Path to Dockerfile'
+- name: runFCSScan
+  type: boolean
+  default: false
+  displayName: 'Run Falcon Container Security Scan'
+- name: deployToACA
+  type: boolean
+  default: false
+  displayName: 'Deploy to Azure Container App'
+- name: azureServiceConnection
+  type: string
+  default: 'YOUR_AZURE_SERVICE_CONNECTION_NAME'
+  displayName: 'Azure Service Connection Name'
+- name: falconRegion
+  type: string
+  default: 'us-1'
+  displayName: 'Falcon Cloud Region'
+  values:
+  - 'us-1'
+  - 'us-2'
+  - 'eu-1'
+  - 'us-gov-1'
+  - 'us-gov-2'
+
+trigger:
+  - main
+pr:
+  - main
+
+schedules:
+- cron: "0 * * * *"
+  displayName: Hourly build
+  branches:
+    include:
+    - main
+  always: true
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # Variable group containing secrets
+  - group: falcon-credentials
+  
+  # Azure Container Registry Configuration
+  - name: acrName
+    value: 'YOUR_ACR_NAME'
+  - name: acrLoginServer
+    value: '${{ variables.acrName }}.azurecr.io'
+
+  # Falcon Configuration
+  - name: falconApiUrl
+    value: 'https://api.crowdstrike.com'
+  - name: fcsRegistry
+    value: 'registry.crowdstrike.com'
+
+  # Falcon Container Security Configuration
+  - name: sensorType
+    value: 'falcon-container'
+  - name: sensorImageName
+    value: 'falcon-container'
+  - name: platform
+    value: 'x86_64'
+  - name: fcsCliVersion
+    value: '2.1.7'
+  - name: falconRegion
+    value: '${{ parameters.falconRegion }}'
+
+  # Container Image Configuration
+  - name: sourceImage
+    value: 'nginx:latest'
+  - name: acrSourceImage
+    value: '$(acrLoginServer)/nginx:latest'
+  - name: targetImage
+    value: '$(acrLoginServer)/nginx:patched'
+  - name: MY_REPO
+    value: '$(acrLoginServer)'
+  - name: dockerfilePath
+    value: '${{ parameters.dockerfilePath }}'
+
+  # Azure Configuration
+  - name: resourceGroup
+    value: 'YOUR_RESOURCE_GROUP_NAME'
+  - name: location
+    value: 'YOUR_AZURE_LOCATION'
+  - name: cloudServer
+    value: 'ACA'
+
+  # Azure Container App Configuration
+  - name: containerAppName
+    value: 'YOUR_CONTAINER_APP_NAME'
+  - name: containerAppEnv
+    value: 'YOUR_CONTAINER_APP_ENVIRONMENT'
+  - name: containerAppPort
+    value: '80'
+  - name: containerAppAdditionalPort
+    value: '8080'
+
+steps:
+- checkout: self
+
+- ${{ if eq(parameters.useDockerfile, true) }}:
+  - script: |
+      echo "Logging into Azure Container Registry..."
+      if ! mv /home/vsts/.docker/config.json /home/vsts/.docker/backup_config.json; then
+        echo "Warning: No existing Docker config to backup"
+      fi
+      docker logout $(acrLoginServer) || true
+      if ! docker login $(acrLoginServer) --username $(ACR_USERNAME) --password $(ACR_PASSWORD); then
+        echo "Error: Failed to log into ACR"
+        exit 1
+      fi
+    displayName: 'Docker Login to ACR'
+
+  - task: Docker@2
+    displayName: 'Build and Push Custom Image'
+    inputs:
+      command: buildAndPush
+      dockerfile: $(dockerfilePath)
+      repository: 'nginx'
+      tags: |
+        $(Build.BuildId)
+      containerRegistry: 'acr'
+
+  - script: |
+      echo "Setting source image to custom build..."
+      echo "##vso[task.setvariable variable=sourceImage]$(acrLoginServer)/nginx:$(Build.BuildId)"
+      echo "##vso[task.setvariable variable=acrSourceImage]$(acrLoginServer)/nginx:$(Build.BuildId)"
+    displayName: 'Update Source Image Variables'
+
+- script: |
+    echo "Logging into Azure Container Registry..."
+    if ! mv /home/vsts/.docker/config.json /home/vsts/.docker/backup_config.json; then
+      echo "Warning: No existing Docker config to backup"
+    fi
+    docker logout $(acrLoginServer) || true
+    if ! docker login $(acrLoginServer) --username $(ACR_USERNAME) --password $(ACR_PASSWORD); then
+      echo "Error: Failed to log into ACR"
+      exit 1
+    fi
+  displayName: 'Docker Login to Azure Container Registry'
+
+- script: |
+    echo "⬇️ Fetching latest Falcon container sensor..."
+    
+    if ! SENSOR_OUTPUT=$(bash <(curl -Ls https://github.com/CrowdStrike/falcon-scripts/releases/latest/download/falcon-container-sensor-pull.sh) \
+      --client-id "$(FALCON_CLIENT_ID)" \
+      --client-secret "$(FALCON_CLIENT_SECRET)" \
+      --type $(sensorType) \
+      --platform $(platform) \
+      --region ${{ parameters.falconRegion }}); then
+      echo "Error: Failed to download Falcon sensor"
+      exit 1
+    fi
+    
+    echo "$SENSOR_OUTPUT"
+    
+    SENSOR_IMAGE=$(echo "$SENSOR_OUTPUT" | grep "Downloaded newer image for" | awk '{print $NF}')
+    if [ -z "$SENSOR_IMAGE" ]; then
+      echo "❌ Failed to get sensor image reference"
+      exit 1
+    fi
+    
+    echo "🏷️ Tagging image as $(acrLoginServer)/$(sensorImageName):latest"
+    if ! docker tag "$SENSOR_IMAGE" "$(acrLoginServer)/$(sensorImageName):latest"; then
+      echo "Error: Failed to tag sensor image"
+      exit 1
+    fi
+    
+    echo "⬆️ Pushing image to ACR..."
+    if ! docker push "$(acrLoginServer)/$(sensorImageName):latest"; then
+      echo "Error: Failed to push sensor image to ACR"
+      exit 1
+    fi
+
+    echo "✅ Sensor processing complete"
+  displayName: 'Download and Process Falcon Container Sensor'
+
+- ${{ if ne(parameters.useDockerfile, true) }}:
+  - script: |
+      echo "Variables:"
+      echo "Source Image: $(sourceImage)"
+      echo "ACR Source Image: $(acrSourceImage)"
+      
+      echo "Pulling source nginx image from Docker Hub..."
+      if ! docker pull $(sourceImage); then
+        echo "Error: Failed to pull source image"
+        exit 1
+      fi
+      
+      echo "Tagging nginx for ACR..."
+      if ! docker tag $(sourceImage) $(acrSourceImage); then
+        echo "Error: Failed to tag image"
+        exit 1
+      fi
+      
+      echo "Pushing nginx to ACR..."
+      if ! docker push $(acrSourceImage); then
+        echo "Error: Failed to push image to ACR"
+        exit 1
+      fi
+    displayName: 'Pull and Push Source Image to ACR'
+
+- script: |
+    echo "Patching image with Falcon Container..."
+    if ! OUTPUT=$(docker run --user 0:0 \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      --rm $(MY_REPO)/falcon-container:latest \
+      falconutil patch-image \
+      --source-image-uri $(acrSourceImage) \
+      --target-image-uri $(targetImage) \
+      --falcon-image-uri $(MY_REPO)/falcon-container:latest \
+      --image-pull-policy IfNotPresent \
+      --resource-group $(resourceGroup) \
+      --subscription ${{ parameters.azureServiceConnection }} \
+      --cloud-service $(cloudServer) \
+      --cid $(FALCON_CID)); then
+      echo "Error: Image patching failed"
+      exit 1
+    fi
+
+    echo "$OUTPUT"
+    
+    DIGEST=$(echo "$OUTPUT" | grep "writing image" | awk '{print $4}')
+    if [ -z "$DIGEST" ]; then
+      echo "Error: Failed to get image digest"
+      exit 1
+    fi
+    echo "Image digest: $DIGEST"
+    echo "##vso[task.setvariable variable=IMAGE_DIGEST]$DIGEST"
+  displayName: 'Patch Image with Falcon Container'
+
+- script: |
+    export CS_REGISTRY=$(fcsRegistry)
+    export CS_IMAGE=${CS_REGISTRY}/fcs/${{ parameters.falconRegion }}/release/cs-fcs
+    export CS_USERNAME=fh-$(FALCON_CID_FCS)
+    export CS_IMAGE_TAG=$(fcsCliVersion)
+
+    echo "Getting auth token..."
+    if ! FALCON_ACCESS_TOKEN=$(curl --request POST \
+      --header "Content-Type: application/x-www-form-urlencoded" \
+      --data-urlencode "client_id=$(FALCON_CLIENT_ID)" \
+      --data-urlencode "client_secret=$(FALCON_CLIENT_SECRET)" \
+      --url "$(falconApiUrl)/oauth2/token" | jq -r '.access_token'); then
+      echo "Error: Failed to get Falcon access token"
+      exit 1
+    fi
+
+    echo "Getting registry password..."
+    if ! CS_PASSWORD=$(curl --request GET \
+      --header "Authorization: Bearer ${FALCON_ACCESS_TOKEN}" \
+      --url "$(falconApiUrl)/iac/entities/image-registry-credentials/v1" | jq -r '.resources.resources.token'); then
+      echo "Error: Failed to get registry credentials"
+      exit 1
+    fi
+
+    echo "Logging into CrowdStrike registry..."
+    if ! echo "${CS_PASSWORD}" | docker login "${CS_REGISTRY}" --username "${CS_USERNAME}" --password-stdin; then
+      echo "Error: Failed to log into CrowdStrike registry"
+      exit 1
+    fi
+
+    echo "Pulling FCS CLI container..."
+    if ! docker pull ${CS_IMAGE}:${CS_IMAGE_TAG}; then
+      echo "Error: Failed to pull FCS CLI container"
+      exit 1
+    fi
+
+    echo "Scanning patched image using digest: $(IMAGE_DIGEST)"
+    if ! docker run --rm --user root \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      ${CS_IMAGE}:${CS_IMAGE_TAG} scan image $(IMAGE_DIGEST) \
+      --client-id $(FALCON_CLIENT_ID) \
+      --client-secret $(FALCON_CLIENT_SECRET) \
+      --falcon-region ${{ parameters.falconRegion }} \
+      --upload; then
+      echo "Error: Image scan failed"
+      exit 1
+    fi
+  displayName: 'Scan Patched Image with FCS CLI'
+  condition: eq('${{ parameters.runFCSScan }}', true)
+
+- script: |
+    echo "Tagging and pushing image to ACR..."
+    if ! docker tag $(IMAGE_DIGEST) $(acrLoginServer)/nginx:patched; then
+      echo "Error: Failed to tag patched image"
+      exit 1
+    fi
+    if ! docker push $(acrLoginServer)/nginx:patched; then
+      echo "Error: Failed to push patched image"
+      exit 1
+    fi
+  displayName: 'Push Patched Image to ACR'
+
+- task: AzureContainerApps@1
+  displayName: 'Deploy to Container App'
+  inputs:
+    connectedServiceNameARM: '${{ parameters.azureServiceConnection }}'
+    imageToDeploy: '$(acrLoginServer)/nginx:patched'
+    containerAppName: '$(containerAppName)'
+    resourceGroup: '$(resourceGroup)'
+    containerAppEnvironment: '$(containerAppEnv)'
+    ingress: 'external'
+    targetPort: $(containerAppPort)
+    environmentVariables: 'PORT=$(containerAppPort) ADDITIONAL_PORT=$(containerAppAdditionalPort)'
+    acrName: '$(acrName)'
+  condition: eq('${{ parameters.deployToACA }}', true)
