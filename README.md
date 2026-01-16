@@ -21,6 +21,19 @@ This pipeline enables you to patch container images with Falcon Container Securi
    - Type: Azure Container Registry
    - Purpose: Docker build and push operations
 
+## Required API Client Scopes
+
+| Scope | Permission | Purpose |
+|-------|------------|---------|
+| Falcon Images Download | Read | Access to download Falcon container images |
+| Sensor Download | Read | Access to download Falcon sensors |
+| Falcon Container CLI | Read/Write | Execute FCS CLI commands and scanning |
+| Falcon Container Image | Read/Write | Pull and manage Falcon container images |
+| Infrastructure as Code | Read/Write | Access image registry credentials |
+
+
+Would you like me to show where exactly in the README this section should go?
+
 ## Pipeline Parameters
 
 | Parameter | Description | Default | Options |
