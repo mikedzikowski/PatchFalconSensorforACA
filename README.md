@@ -54,9 +54,16 @@ Below are all the variables you need to define before using this pipeline.
 ### Container App Configuration
 
 | Variable | Description | Example | Required |
+|----------|-------------|---------|----------|
 | containerAppName | Name of your Container App | 'myapp-web' | Yes |
 | containerAppEnv | Name of your Container Apps Environment | 'prod-environment' | Yes |
 | containerAppPort | Primary container port | '80' | Yes |
+
+Fixed the table formatting by:
+
+1. Adding the missing header row separator line
+2. Aligning the columns properly
+3. Maintaining consistent column structure
 
 ## Repository Structure
 
