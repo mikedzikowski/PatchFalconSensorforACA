@@ -149,6 +149,8 @@ Azure DevOps pipeline run dialog showing configurable parameters including Docke
 
 ![Custom Web App](images/buildrun.png)
 
+![hello-world](images/hello.png)
+
 *Custom nginx deployment showing the personalized index.html content running in ACA*
 
 #### 3. Full Patch Ppeline
